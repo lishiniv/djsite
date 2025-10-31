@@ -1,14 +1,16 @@
 from django.urls import path, re_path, register_converter
 
 from . import converters
-from .views import *
+from . import views
 
 register_converter(converters.FourDigitYearConverter, 'year4')
 
 urlpatterns = [
-    path('', index, name='home'),
-    path('about/', about, name='about'),
-    path('cats/<int:cat_id>/', cats, name='cats'),
-    path('cats/<slug:cat_slug>/', categories, name='categories'),
-    path('archive/<year4:year>/', archive, name='archive'),
+    path('', views.index, name='home'),
+    path('about/', views.about, name='about'),
+    path('post/<int:post_id>/', views.show_post, name='post'),
+    path('add_page/', views.add_page, name='add_page'),
+    path('contact/', views.contact, name='contact'),
+    path('login/', views.login, name='login'),
+
 ]
