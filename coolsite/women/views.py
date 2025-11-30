@@ -1,53 +1,117 @@
-from django.http import HttpResponse, HttpResponseNotFound
-from django.shortcuts import render
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin
+from django.core.paginator import Paginator
+from django.http import HttpResponse, HttpResponseNotFound, Http404, HttpResponseRedirect, HttpResponsePermanentRedirect
+from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse, reverse_lazy
+from django.template.loader import render_to_string
+from django.template.defaultfilters import slugify
+from django.views import View
+from django.views.decorators.csrf import csrf_protect
+from django.views.generic import TemplateView, ListView, DetailView, FormView, CreateView, UpdateView, DeleteView
 
-menu = [
-    {'title': 'О сайте', 'url_name': 'about'},
-    {'title': 'Добавить статью', 'url_name': 'add_page'},
-    {'title': 'Обратная связь', 'url_name': 'contact'},
-    {'title': 'Войти', 'url_name': 'login'},
-]
-
-data_db = [
-    {'id': 1, 'title': 'Анджелина Джоли', 'content': '''<h1>Анджелина Джоли</h1> (англ. Angelina Jolie[7], при рождении Войт (англ. Voight), ранее Джоли Питт (англ. Jolie Pitt); род. 4 июня 1975, Лос-Анджелес, Калифорния, США) — американская актриса кино, телевидения и озвучивания, кинорежиссёр, сценаристка, продюсер, фотомодель, посол доброй воли ООН.
-    Обладательница премии «Оскар», трёх премий «Золотой глобус» (первая актриса в истории, три года подряд выигравшая премию) и двух «Премий Гильдии киноактёров США».''',
-     'is_published': True},
-    {'id': 2, 'title': 'Марго Робби', 'content': 'Биография Марго Робби', 'is_published': False},
-    {'id': 3, 'title': 'Джулия Робертс', 'content': 'Биография Джулия Робертс', 'is_published': True},
-]
+from .forms import AddPostForm, UploadFileForm
+from .models import Women, Category, TagPost, UploadFiles
+from .utils import DataMixin
 
 
-# Create your views here.
-def index(request):
-    # template = render_to_string('women/index.html')
-    # return HttpResponse(template)
-    data = {
-        'title': 'Главная страница',
-        'posts': data_db,
-        'menu': menu
-    }
-    return render(request, 'women/index.html', data)
+class WomenHome(DataMixin, ListView):
+    template_name = 'women/index.html'
+    context_object_name = 'posts'
+    title_page = 'Главная страница'
+    cat_selected = 0
 
+    def get_queryset(self):
+        return Women.published.all().select_related('cat')
 
+@login_required
 def about(request):
-    return render(request, 'women/about.html', {'title': 'О сайте', 'menu': menu})
+    contact_list = Women.published.all()
+    paginator = Paginator(contact_list, 3)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+    return render(request, 'women/about.html',
+                  {'title': 'О сайте', 'page_obj': page_obj})
 
 
-def show_post(request, post_id):
-    return HttpResponse(f"Отображение статьи с id = {post_id}")
+class ShowPost(DataMixin, DetailView):
+    template_name = 'women/post.html'
+    slug_url_kwarg = 'post_slug'
+    context_object_name = 'post'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        return self.get_mixin_context(context, title=context['post'].title)
+
+    def get_object(self, queryset=None):
+        return get_object_or_404(Women.published, slug=self.kwargs[self.slug_url_kwarg])
 
 
-def page_not_found(request, exception):
-    return HttpResponseNotFound('<h1>Страница не найдена</h1>')
+class AddPage(PermissionRequiredMixin, LoginRequiredMixin, DataMixin, CreateView):
+    form_class = AddPostForm  # ссылка
+    template_name = 'women/addpage.html'
+    title_page = 'Добавление статьи'
+    permission_required = 'women.add_women'
+    # success_url = reverse_lazy('home')
+
+    def form_valid(self, form):
+        w = form.save(commit=False)
+        w.author = self.request.user
+        return super().form_valid(form)
 
 
-def add_page(request):
-    return HttpResponse('Добавление статьи')
+class UpdatePage(PermissionRequiredMixin, DataMixin, UpdateView):
+    template_name = 'women/addpage.html'
+    model = Women
+    fields = ['title', 'content', 'photo', 'is_published', 'cat']
+    success_url = reverse_lazy('home')
+    title_page = 'Редактирование статьи'
+    permission_required = 'women.change_women'
+
+
+class DeletePage(DataMixin, DeleteView):
+    template_name = 'women/addpage.html'
+    model = Women
+    fields = ['title', 'content']
+    success_url = reverse_lazy('home')
+    title_page = 'Удаление статьи'
 
 
 def contact(request):
-    return HttpResponse('Обратная связь')
+    return HttpResponse("Обратная связь")
 
 
 def login(request):
-    return HttpResponse('Авторизация')
+    return HttpResponse("Авторизация")
+
+
+class WomenCategory(DataMixin, ListView):
+    template_name = 'women/index.html'
+    context_object_name = 'posts'
+    allow_empty = False
+
+    def get_queryset(self):
+        return Women.published.filter(cat__slug=self.kwargs['cat_slug']).select_related("cat")
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        cat = context['posts'][0].cat
+        return self.get_mixin_context(context, title=f'Категория - {cat.name}', cat_selected=cat.pk)
+
+
+def page_not_found(request, exception):
+    return HttpResponseNotFound("<h1>Страница не найдена</h1>")
+
+
+class WomenTag(DataMixin, ListView):
+    template_name = 'women/index.html'
+    context_object_name = 'posts'
+    allow_empty = False
+
+    def get_queryset(self):
+        return Women.published.filter(tags__slug=self.kwargs['tag_slug']).select_related("cat")
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        tag = TagPost.objects.get(slug=self.kwargs['tag_slug'])
+        return self.get_mixin_context(context, title=f'Тэг - {tag.tag}')
